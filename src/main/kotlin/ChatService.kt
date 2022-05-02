@@ -5,61 +5,50 @@ class ChatService {
     val users: MutableList<User> = mutableListOf()
 
     fun addUser(userId: Int, userName: String): User {
-        val newUser = User(userId, userName)
-        users.add(newUser)
-        return newUser
+        users.apply { add(User(userId, userName)) }
+        return users.last()
     }
 
     fun createChat(userId: Int, message: String, sendTo: Int): Chat {
         val newMessage = Message(userId, allMessageIds.size + 1, message, sendTo)
-        allMessageIds += newMessage.messageId
-        val chatId = chats.size + 1
-        val newChat = Chat(chatId)
-        newChat.messages += newMessage
+        allMessageIds.add(newMessage.messageId)
+        val newChat = Chat(chats.size + 1).apply {
+            messages.add(newMessage)
+        }
         chats.add(newChat)
-        val sender = users.first { it.userId == userId }
-        sender.sentMessages.add(newMessage)
-        val receiver = users.first { it.userId == sendTo }
-        receiver.receivedMessages.add(newMessage)
-        sender.let(newChat.chatUsers::add)
-        receiver.let(newChat.chatUsers::add)
+        users.first { it.userId == userId }.apply {
+            sentMessages.add(newMessage)
+            let(newChat.chatUsers::add)
+        }
+        users.first { it.userId == sendTo }.apply {
+            receivedMessages.add(newMessage)
+            let(newChat.chatUsers::add)
+        }
         return newChat
     }
 
     fun createMessage(userId: Int, message: String, chatId: Int): Message {
-        val currentChatId = chats.indexOfFirst { it.chatId == chatId }
-        val currentChat = chats[currentChatId]
-        val sender = currentChat.chatUsers.first { it.userId == userId }
-        val receiver = currentChat.chatUsers.first { it.userId != userId }
+        val sender = chats.first { it.chatId == chatId }.chatUsers.first { it.userId == userId }
+        val receiver = chats.first { it.chatId == chatId }.chatUsers.first { it.userId != userId }
         val newMessage = Message(sender.userId, allMessageIds.size + 1, message, receiver.userId)
-        allMessageIds += newMessage.messageId
-        val messages = currentChat.messages
-        messages.add(newMessage)
-        chats[currentChatId] = currentChat.copy(messages = messages)
-        sender.sentMessages.add(newMessage)
-        receiver.receivedMessages.add(newMessage)
+        allMessageIds.add(newMessage.messageId)
+        chats.first { it.chatId == chatId }.apply {
+            messages.add(newMessage)
+            sender.sentMessages.add(newMessage)
+            receiver.receivedMessages.add(newMessage)
+        }
         return newMessage
     }
 
     fun deleteChat(chatId: Int) {
         if (chatId !in 1..chats.size || chats[chatId - 1].isDeleted) throw ChatNotFoundException("Chat not found")
-        val currentChatId = chats.indexOfFirst { it.chatId == chatId }
-        val currentChat = chats[currentChatId]
-        chats[currentChatId] = currentChat.copy(isDeleted = true)
-        chats[currentChatId].messages.forEach { message ->
-            if (!message.isDeleted) {
+        chats.first { it.chatId == chatId }.apply {
+            isDeleted = true
+            messages.filter { !it.isDeleted }.forEach { message ->
                 message.isDeleted = true
-                chats[currentChatId].chatUsers.forEach { user ->
-                    user.sentMessages.forEach { sentMessage ->
-                        if (sentMessage.messageId == message.messageId) {
-                            sentMessage.isDeleted = true
-                        }
-                    }
-                    user.receivedMessages.forEach { receivedMessage ->
-                        if (receivedMessage.messageId == message.messageId) {
-                            receivedMessage.isDeleted = true
-                        }
-                    }
+                chatUsers.forEach { user ->
+                    user.sentMessages.filter { it.messageId == message.messageId }.forEach { it.isDeleted = true }
+                    user.receivedMessages.filter { it.messageId == message.messageId }.forEach { it.isDeleted = true }
                 }
             }
         }
@@ -68,17 +57,12 @@ class ChatService {
     fun deleteMessage(messageId: Int) {
         if (messageId !in 1..allMessageIds.size) throw MessageNotFoundException("Message not found")
         chats.forEach { chat ->
-            chat.messages.forEach { message ->
-                if (message.messageId == messageId && message.isDeleted) throw MessageNotFoundException("Message not found")
-                if (message.messageId == messageId && !message.isDeleted) {
-                    message.isDeleted = true
-                    val chatIndex: Int = chats.indexOf(chat)
-                    val newMessages = chat.messages
-                    chats[chatIndex] = chat.copy(messages = newMessages)
+            chat.messages.first { it.messageId == messageId }.let { message ->
+                when {
+                    message.isDeleted -> throw MessageNotFoundException("Message not found")
+                    !message.isDeleted -> message.isDeleted = true
                 }
             }
-        }
-        chats.forEach { chat ->
             chat.messages.all { it.isDeleted }.let { chat.isDeleted = true }
         }
     }
@@ -101,25 +85,28 @@ class ChatService {
         }
     }
 
-
     fun getChatMessages(chatId: Int, firstMessageId: Int, messagesAmount: Int): List<Message> {
         if (chatId !in 1..chats.size || chats[chatId - 1].isDeleted) throw ChatNotFoundException("Chat not found")
-        val currentChatId = chats.indexOfFirst { it.chatId == chatId }
-        val currentChat = chats[currentChatId]
-        val firstMessage = currentChat.messages.first { it.messageId == firstMessageId }
-        val messageIndex = currentChat.messages.indexOf(firstMessage)
-        val showMessagesList = currentChat.messages.slice(messageIndex until messageIndex + messagesAmount)
-        println("Чат #${currentChat.chatId} ${currentChat.chatUsers[0].userName} - ${currentChat.chatUsers[1].userName}")
-        showMessagesList.forEach { message ->
-            val currentUserName = users.first { it.userId == message.userId }.userName
-            if (!message.isDeleted) {
-                println("$currentUserName: ${message.message}")
-            }
+        val showMessagesList = chats.first { it.chatId == chatId }.let { chat ->
+            val messageIndex = chat.messages.indexOfFirst { it.messageId == firstMessageId }
+            chat.messages.asSequence()
+                .drop(messageIndex)
+                .take(messagesAmount)
+                .toMutableList()
         }
-        (showMessagesList.indices).forEach { i ->
-            currentChat.messages.forEach {
-                if (it.messageId == showMessagesList[i].messageId) {
-                    it.isRead = true
+        chats.first { it.chatId == chatId }.let { chat ->
+            println("Чат #${chat.chatId} ${chat.chatUsers[0].userName} - ${chat.chatUsers[1].userName}")
+            showMessagesList.forEach { message ->
+                val currentUserName = users.first { it.userId == message.userId }.userName
+                if (!message.isDeleted) {
+                    println("$currentUserName: ${message.message}")
+                }
+            }
+            (showMessagesList.indices).forEach { i ->
+                chat.messages.forEach { message ->
+                    if (message.messageId == showMessagesList[i].messageId) {
+                        message.isRead = true
+                    }
                 }
             }
         }
@@ -134,7 +121,7 @@ class ChatService {
         var unreadChatsCount = 0
         chats.forEach { chat ->
             var messageCounter = 0
-            val currentUser: User? = chat.chatUsers.find { it.userId == userId }
+            val currentUser = chat.chatUsers.first { it.userId == userId }
             if (chat.chatUsers.contains(currentUser) && !chat.isDeleted) {
                 chat.messages.forEach {
                     if (!it.isRead) messageCounter++
